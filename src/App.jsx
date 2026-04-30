@@ -273,18 +273,155 @@ function ProblemCard({
 function NumericBody({ problem, phase, input, setInput, inputRef, onSubmit, lastCorrect }) {
   const meta = METRICS[problem.metricId]
   const { scenario } = problem
+  const [tokens, setTokens] = useState([])
+  const [ans, setAns] = useState(null)
+  const [history, setHistory] = useState(null)
+
+  // Reset the calculator when the problem changes.
+  useEffect(() => {
+    setTokens([])
+    setAns(null)
+    setHistory(null)
+  }, [scenario.BAC, scenario.PV, scenario.EV, scenario.AC, problem.metricId])
+
+  const interactive = phase === 'answering'
+
+  function pushOperand(label, value) {
+    if (!interactive) return
+    setTokens((prev) => {
+      const last = prev[prev.length - 1]
+      const tok = { type: 'num', label, value }
+      if (last && last.type === 'num') return [...prev.slice(0, -1), tok]
+      return [...prev, tok]
+    })
+  }
+
+  function pushOp(opKey, opLabel) {
+    if (!interactive) return
+    setTokens((prev) => {
+      if (prev.length === 0) return prev
+      const last = prev[prev.length - 1]
+      const tok = { type: 'op', key: opKey, label: opLabel }
+      if (last.type === 'op') return [...prev.slice(0, -1), tok]
+      return [...prev, tok]
+    })
+  }
+
+  function backspace() {
+    if (!interactive) return
+    setTokens((prev) => prev.slice(0, -1))
+  }
+
+  function clearExpr() {
+    if (!interactive) return
+    setTokens([])
+  }
+
+  function evaluate() {
+    if (!interactive) return
+    if (tokens.length === 0) return
+    const last = tokens[tokens.length - 1]
+    if (last.type === 'op') return
+    const result = evalTokens(tokens)
+    if (!Number.isFinite(result)) return
+    const exprStr = tokens.map((t) => t.label).join(' ')
+    setHistory(`${exprStr} = ${formatCalc(result)}`)
+    setAns(result)
+    setTokens([])
+    setInput(formatForInput(result))
+  }
+
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-        <Given label="BAC" value={fmtMoney(scenario.BAC)} />
-        <Given label="PV"  value={fmtMoney(scenario.PV)} />
-        <Given label="EV"  value={fmtMoney(scenario.EV)} />
-        <Given label="AC"  value={fmtMoney(scenario.AC)} />
+        <OperandTile label="BAC" value={fmtMoney(scenario.BAC)}
+          onClick={() => pushOperand('BAC', scenario.BAC)} disabled={!interactive} />
+        <OperandTile label="PV" value={fmtMoney(scenario.PV)}
+          onClick={() => pushOperand('PV', scenario.PV)} disabled={!interactive} />
+        <OperandTile label="EV" value={fmtMoney(scenario.EV)}
+          onClick={() => pushOperand('EV', scenario.EV)} disabled={!interactive} />
+        <OperandTile label="AC" value={fmtMoney(scenario.AC)}
+          onClick={() => pushOperand('AC', scenario.AC)} disabled={!interactive} />
       </div>
 
       <div className="text-2xl sm:text-3xl font-bold mb-4">
         <span className="text-cyan-400">{meta.label}</span> = ?
       </div>
+
+      {interactive && (
+        <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-3 mb-3">
+          <div className="text-xs text-slate-500 min-h-[1.25rem] flex items-center gap-1">
+            {history ? (
+              <>直前: <span className="font-mono text-slate-400">{history}</span></>
+            ) : (
+              <span className="text-slate-600">上の数字と下の演算子をタップ → = で解答欄に入力</span>
+            )}
+          </div>
+          <div className="mt-1 mb-3 min-h-[1.75rem] flex items-center gap-1.5 flex-wrap">
+            <span className="text-slate-500 text-xs mr-1">式:</span>
+            {tokens.length === 0 ? (
+              <span className="text-slate-600 text-sm">—</span>
+            ) : (
+              tokens.map((t, i) => (
+                <span
+                  key={i}
+                  className={
+                    'font-mono px-1.5 py-0.5 rounded ' +
+                    (t.type === 'op'
+                      ? 'text-cyan-400 text-lg'
+                      : t.label === 'Ans'
+                        ? 'bg-amber-900/30 text-amber-200'
+                        : 'bg-slate-800 text-slate-200')
+                  }
+                >
+                  {t.label}
+                </span>
+              ))
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-1.5 mb-1.5">
+            {[
+              { key: '+', label: '+' },
+              { key: '-', label: '−' },
+              { key: '*', label: '×' },
+              { key: '/', label: '÷' },
+            ].map((o) => (
+              <button
+                key={o.key}
+                onClick={() => pushOp(o.key, o.label)}
+                className="bg-slate-800 hover:bg-slate-700 rounded-md py-2 font-mono text-lg"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            <button
+              onClick={() => pushOperand('Ans', ans)}
+              disabled={ans === null}
+              className="col-span-2 rounded-md py-2 px-3 bg-amber-900/20 border border-amber-500/30 enabled:hover:bg-amber-900/30 disabled:opacity-40 disabled:cursor-not-allowed text-left"
+            >
+              <div className="text-xs text-amber-300 leading-tight">Ans</div>
+              <div className="font-mono font-semibold tabular-nums text-sm leading-tight">
+                {ans === null ? '—' : formatCalc(ans)}
+              </div>
+            </button>
+            <button
+              onClick={tokens.length > 0 ? backspace : clearExpr}
+              className="bg-slate-700 text-slate-300 hover:bg-slate-600 rounded-md py-2 text-sm"
+              title={tokens.length > 0 ? '一つ戻す' : 'クリア'}
+            >
+              {tokens.length > 0 ? '⌫' : 'C'}
+            </button>
+            <button
+              onClick={evaluate}
+              className="bg-cyan-500 text-slate-900 hover:bg-cyan-400 rounded-md py-2 font-bold"
+            >
+              =
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <input
@@ -292,7 +429,6 @@ function NumericBody({ problem, phase, input, setInput, inputRef, onSubmit, last
           type="number"
           step="any"
           inputMode="decimal"
-          autoFocus
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={phase === 'feedback'}
@@ -322,6 +458,59 @@ function NumericBody({ problem, phase, input, setInput, inputRef, onSubmit, last
       )}
     </div>
   )
+}
+
+function OperandTile({ label, value, onClick, disabled }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={
+        'bg-slate-900/60 rounded-md px-3 py-2 border border-slate-700/40 text-left transition ' +
+        'enabled:hover:bg-slate-800/80 enabled:cursor-pointer disabled:cursor-default'
+      }
+    >
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="font-mono font-semibold tabular-nums">{value}</div>
+    </button>
+  )
+}
+
+// Evaluate a flat token list with standard precedence (× ÷ before + −), left-to-right.
+// Tokens shape: [{type:'num', value}, {type:'op', key}, ...]. No parentheses.
+function evalTokens(tokens) {
+  const t = tokens.map((x) => ({ ...x }))
+  let i = 1
+  while (i < t.length) {
+    const op = t[i].key
+    if (op === '*' || op === '/') {
+      const a = t[i - 1].value
+      const b = t[i + 1].value
+      const r = op === '*' ? a * b : a / b
+      t.splice(i - 1, 3, { type: 'num', value: r })
+    } else {
+      i += 2
+    }
+  }
+  let result = t[0].value
+  for (let j = 1; j < t.length; j += 2) {
+    const op = t[j].key
+    const v = t[j + 1].value
+    result = op === '+' ? result + v : result - v
+  }
+  return result
+}
+
+function formatCalc(n) {
+  if (!Number.isFinite(n)) return '—'
+  if (Math.abs(n) >= 1000) return Math.round(n).toLocaleString('en-US')
+  return (+n.toFixed(4)).toString()
+}
+
+function formatForInput(n) {
+  if (!Number.isFinite(n)) return ''
+  if (Math.abs(n) >= 1000) return String(Math.round(n))
+  return (+n.toFixed(6)).toString()
 }
 
 function ChoiceBody({ problem, phase, picked, onPick, lastCorrect }) {
